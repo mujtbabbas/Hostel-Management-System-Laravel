@@ -1,0 +1,453 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App;
+use App\AllotedSeats;
+use App\Departments;
+use App\Institution;
+use App\RoomDetails;
+use App\SeatMatrix;
+use App\MeritList;
+use App\StudentApply;
+use App\StudentEducation;
+use App\User;
+use App\CopySeatMatrix;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Intervention\Image\Facades\Image;
+
+class AdminController extends Controller
+{
+    public function __construct()
+    {
+        $this->middleware('auth');
+    }
+
+    public function adminHome()
+    {
+        return view('Profile.Admin.home');
+    }
+
+    public function pending(User $user)
+    {
+        $data = $user->all()->where('pending', '1');
+        return view('Profile.Admin.pending', compact('data'));
+    }
+
+    public function accept($user)
+    {
+        $data = User::find($user);
+        $data->pending = '0';
+        $data->save();
+        return redirect('/admin/pending');
+    }
+
+    public function reject($user)
+    {
+        User::find($user)->delete();
+        return redirect('/admin/pending');
+    }
+
+    public function block($user)
+    {
+        $data = User::find($user);
+        $data->pending = '1';
+        $data->save();
+        return redirect('/admin/manage-admin');
+    }
+
+    public function manageAdmin()
+    {
+        $data = User::all();
+        $data = $data->where('user_type', 'admin');
+        $data = $data->where('pending', '0');
+        return view('Profile.Admin.manageAdmin', compact('data'));
+    }
+
+    public function manageStudent()
+    {
+        $data = User::all()->where('user_type', 'user');
+        return view('Profile.Admin.manageStudent', compact('data'));
+    }
+
+    public function showAddRoom()
+    {
+        return view('Profile.Admin.addRoom');
+    }
+
+    public function addRoom()
+    {
+        $data = request()->validate([
+            'room_type' => 'required',
+            'price' => 'required',
+            'department_id' => 'required',
+            'room_number' => ['required','unique:room_details'],
+            'capacity' => 'required',
+            'term' => 'required|integer|between:1,10',
+            'gender' => 'required',
+            // 'image1' => ['required', 'image'],
+            // 'image2' => ['required', 'image'],
+            // 'room_select' => 'required',
+        ]);
+        $data['is_ac'] = request()->has('is_ac');
+        $data['is_guest'] = request()->has('is_guest');
+        $data['institution_id'] = Departments::find($data['department_id'])->Institution->id;
+        $imageArray = [];
+        // if (request('image1') && request('image2')) {
+        //     $imagePath1 = request('image1')->store('uploads/Rooms', 'public');
+        //     $image1 = Image::make(public_path("storage/{$imagePath1}"))->fit(1280, 720);
+        //     $image1->save();
+        //     $imagePath2 = request('image2')->store('uploads/Rooms', 'public');
+        //     $image2 = Image::make(public_path("storage/{$imagePath2}"))->fit(1280, 720);
+        //     $image2->save();
+        //     $imageArray = [
+        //         'image1' => $imagePath1,
+        //         'image2' => $imagePath2
+        //     ];
+        // }
+        $new = new RoomDetails();
+        $merge = array_merge(
+            $data,
+            $imageArray
+        );
+        $new->fill($merge);
+        $new->save();
+
+
+        return redirect('/showRooms');
+    }
+
+    public function seatMatrix()
+    {
+        return view('Profile.Admin.seatMatrix');
+    }
+
+    public function editDept()
+    {
+        $institute = Institution::all();
+        return view('Profile.Admin.editDept', compact('institute'));
+    }
+
+    public function addInstitute()
+    {
+        $data = request()->validate([
+            'institute' => 'required',
+        ]);
+        $new = new Institution();
+        $new->create($data);
+        return redirect('/admin/edit-dept');
+    }
+
+    public function getInstitution()
+    {
+        $institute = Institution::all();
+        return $institute;
+    }
+
+    public function deleteInstitution()
+    {
+        $data = request('id');
+        Institution::where('id', $data)->delete();
+        return redirect('/admin/edit-dept');
+    }
+
+    public function addDepartment()
+    {
+        $data = request()->validate([
+            "institution_id" => 'required',
+            "department_name" => 'required'
+        ]);
+
+        $new = new Departments();
+        $new->create($data);
+        return redirect('/admin/edit-dept');
+    }
+
+    public function getDepartment()
+    {
+        $val = request('institution_id');
+        $data = Departments::all();
+        
+        $data = $data->where('institution_id', $val);
+        return $data;
+    }
+
+    public function showSeatMatrix()
+    {
+        return view('Profile.Admin.EditSeatMatrix');
+    }
+
+    public function addSeatMatrix()
+    {
+
+        if(CopySeatMatrix::all()->count() > 0){
+        return 'Cannot edit after copy seat matrix generated';
+        }
+
+        $data = request()->validate([
+            "institution_id" => 'required',
+            "department_id" => 'required',
+            "year" => 'required',
+            "cast" => 'required',
+            "boys_seat" => 'required',
+            "girls_seat" => 'required',
+        ]);
+
+        $new = SeatMatrix::firstOrNew([
+            'institution_id' => $data['institution_id'],
+            'department_id' => $data['department_id'],
+            'year' => $data['year'],
+            'cast' => $data['cast']
+            ]);
+
+        $new->boys_seat = $data['boys_seat'];
+        $new->girls_seat = $data['girls_seat'];
+        $new->save();
+        return redirect('/');
+    }
+
+    public function getSeatMatrix()
+    {        
+        $data = SeatMatrix::all();
+
+        $institute = Institution::all();
+        $department = Departments::all();
+        //get institute name
+        for ($i = 0; $i < $data->count(); $i++) {
+            $in = $institute->where("id", $data[$i]["institution_id"])->toArray();
+            foreach ($in as $value) {
+                $data[$i]["institution_id"] = $value["institute"];
+            }
+        // get department name
+            $in = $department->where('id', $data[$i]['department_id'])->toArray();
+            foreach ($in as $value) {
+                $data[$i]["department_id"] = $value["department_name"];
+            }
+        }
+        return $data;
+    }
+
+    public function showStudentApply()
+    {
+        $data = StudentApply::with(['user' => function($user){
+            $user->with('studentprofile');
+        }])->get();
+        // return ($data);
+        return view('Profile.Admin.studentApply', compact('data'));
+    }
+
+    public function showLeaveRequests()
+    {
+        $data = \App\StudentLeave::with('user')->get();
+        return view('Profile.Admin.leaveRequests', compact('data'));
+    }
+
+    public function approveLeave($leaveId)
+    {
+        $leave = \App\StudentLeave::find($leaveId);
+        $leave->isApproved = 1;
+        $leave->save();
+        return redirect('/admin/leave-requests')->with('success', 'Leave request approved successfully');
+    }
+
+    public function rejectLeave($leaveId)
+    {
+        $leave = \App\StudentLeave::find($leaveId);
+        $leave->isApproved = 0;
+        $leave->save();
+        return redirect('/admin/leave-requests')->with('success', 'Leave request rejected successfully');
+    }
+
+    public function generate_seat_matrix()
+    {
+
+        $applications = StudentApply::all();
+        $ssc_hsc = '';
+        $clg = '';
+        $depts = Departments::all();
+        foreach ($applications as $application) {
+            $joined = $application->user->select('*')
+                ->join('student_education', 'users.id', '=', 'student_education.user_id')
+                ->join('student_applies', 'users.id', '=', 'student_applies.user_id')
+                ->join('student_profiles', 'users.id', '=', 'student_profiles.user_id')
+                ->join('departments', 'student_education.department_id', '=', 'departments.id');
+
+            $ssc_hsc = $joined->where('in_ssc_hsc', 1)->get()->sortByDesc('percentage');
+
+            $joined = $application->user->select('*')
+                ->join('student_education', 'users.id', '=', 'student_education.user_id')
+                ->join('student_applies', 'users.id', '=', 'student_applies.user_id')
+                ->join('student_profiles', 'users.id', '=', 'student_profiles.user_id');
+            $clg = $joined->where('in_ssc_hsc', 0)->get()->sortByDesc('cgpa');
+        }
+
+
+        foreach ($ssc_hsc as $data) {
+            $merit_list = MeritList::firstOrCreate(['user_id' => $data->user_id ]);
+            $merit_list->user_id = $data->user_id;
+            $merit_list->institution_id = $data->institution_id;
+            $merit_list->department_id = $data->department_id;
+            $merit_list->in_ssc_hsc = true;
+            $merit_list->in_college = false;
+            $merit_list->cgpa = $data->cgpa;
+            $merit_list->percentage = $data->percentage;
+            $merit_list->term = $data->term;
+            $merit_list->cast = $data->cast;
+            $merit_list->gender = $data->gender;
+            $merit_list->save();
+        }
+
+        foreach ($clg as $data) {
+            $merit_list = MeritList::firstOrCreate(['user_id' => $data->user_id ]);
+            $merit_list->users_id = $data->user_id;
+            $merit_list->institution_id = $data->institution_id;
+            $merit_list->department_id = $data->department_id;
+            $merit_list->in_ssc_hsc = false;
+            $merit_list->in_college = true;
+            $merit_list->cgpa = $data->cgpa;
+            $merit_list->percentage = $data->percentage;
+            $merit_list->term = $data->term;
+            $merit_list->cast = $data->cast;
+            $merit_list->gender = $data->gender;
+            $merit_list->save();
+        }
+        // dd($merit_list->Department->id);
+        // Create MasterMeritList migration
+        // ADD create MasterMeritList button on edit_seat_matrix page, after submitting that button
+        // Normalize cast field
+
+        $merit_list = MeritList::all();
+
+        return view('Profile.Admin.seatMat', compact('ssc_hsc', 'clg', 'depts','merit_list'));
+
+    //    $applications = StudentApply::all();
+    //    foreach ($applications as $application) {
+    //        $joined = $application->user->select('*')
+    //            ->join('student_education', 'users.id', '=', 'student_education.user_id')
+    //            ->join('student_applies', 'users.id', '=', 'student_applies.user_id')
+    //            ->join('student_profiles', 'users.id', '=', 'student_profiles.user_id');
+    //        $ssc_hsc = $joined->where('in_ssc_hsc', 1)->get()->sortByDesc('percentage');
+
+    //        $joined = $application->user->select('*')
+    //            ->join('student_education', 'users.id', '=', 'student_education.user_id')
+    //            ->join('student_applies', 'users.id', '=', 'student_applies.user_id')
+    //            ->join('student_profiles', 'users.id', '=', 'student_profiles.user_id');
+    //        $college = $joined->where('in_college', 1)->get()->sortByDesc('cgpa');
+
+    //    }
+    //        $pdf = App::make('dompdf.wrapper');
+
+    //        $output = " <table>
+    //        <tr>                       
+    //         <th>First Name</th>
+    //        </tr>";
+    //        foreach ($ssc_hsc as $value)
+    //        {
+    //            $output =  $output . "
+                  
+    //                    <tr>
+    //                     <td>".$value->first_name."</td>
+    //                    </tr>                   
+    //            ";
+    //        }
+    //        $output = $output . "</table>";
+    //     //    dd($ssc_hsc); 
+    //        $pdf->loadHTML($output);
+    //        return $pdf->stream();
+    }
+
+    public function generateMasterSeatMatrix()
+    {
+        // RoomDetails::whereBetween("id", [0,100])->update(["assigned" => 0]);
+        // AllotedSeats::whereBetween("id", [0,100])->delete();
+        $temp_seat_matrix = CopySeatMatrix::all();
+
+        foreach($temp_seat_matrix as $seat_matrix){
+            $master_seat_matrix = SeatMatrix::firstOrNew(['institution_id' => $seat_matrix->institution_id ,
+                                                                'department_id' => $seat_matrix->department_id ,
+                                                                'year' => $seat_matrix->year ,
+                                                                'cast' => $seat_matrix->cast]);
+            $master_seat_matrix->institution_id = $seat_matrix->institution_id;
+            $master_seat_matrix->department_id = $seat_matrix->department_id;
+            $master_seat_matrix->year = $seat_matrix->year;
+            $master_seat_matrix->cast = $seat_matrix->cast;
+            $master_seat_matrix->boys_seat = $seat_matrix->boys_seat;
+            $master_seat_matrix->girls_seat = $seat_matrix->girls_seat;
+            $master_seat_matrix->save();
+        }
+        return (CopySeatMatrix::all());
+
+    }
+    public function allotSeats(){        
+        RoomDetails::whereBetween("id", [0,100])->update(["assigned" => 0]);
+        // dd("START",AllotedSeats::all());
+        $merit_list = MeritList::where('in_ssc_hsc',1)->get();                
+//        ALLOT SEATS ACCORDING TO MERIT LIST
+        $alloted_seats = collect([]);
+
+        foreach($merit_list as $item){
+
+           error_log("Merit List seat matrix");
+           $seat_matrix =  SeatMatrix::where([
+                ['institution_id' , $item->institution_id],
+                ['department_id' , $item->department_id],
+                ['year' , $item->term],
+                ['cast' , $item->cast],
+            ])->get()->first();
+            $available = false;            
+           if($seat_matrix){            
+               $newSeat =  AllotedSeats::firstOrCreate(['merit_list_id' => $item->id ]);
+               if ($item->gender == 'male'){
+                   if ($seat_matrix->boys_seat > 0){
+                       $seat_matrix->boys_seat -= 1;
+                       $available = true;
+                       $alloted_seats->add($item);
+                       error_log("MALE");
+                   }
+               }elseif ($item->gender == 'female'){
+                   if ($seat_matrix->girls_seat > 0){
+                       $seat_matrix->girls_seat -= 1;
+                       $available = true;
+                       $alloted_seats->add($item);
+                       error_log("FEMALE");
+                   }
+                }
+                if ($available){
+                    $newSeat->user_id = $item->user_id; $newSeat->is_room_allocated = false;$newSeat->merit_list_id = $item->id;$newSeat->term = $item->term;
+                    $newSeat->save();
+                }
+              $seat_matrix->save();
+//
+           }
+
+        }
+//        dd(AllotedSeats::all()->first->MeritList);
+//        ALLOT ROOMS CORRESPONDING TO  institution_id , department_id AND  year
+        foreach ($alloted_seats=AllotedSeats::all() as  $alloted_seat){
+            $room = RoomDetails::where([
+                // ['institution_id' , $alloted_seat->MeritList->institution_id],
+                // ['department_id' , $alloted_seat->MeritList->department_id],
+                // ['term' , $alloted_seat->MeritList->term],
+                ['gender' , $alloted_seat->MeritList->gender]
+            ])->get()->first();
+            if ($room){
+                if($room->assigned < $room->capacity){
+                    $room->assigned += 1;
+                    $alloted_seat->room_detail_id = $room->id;
+                    $room->save();    
+                    $alloted_seat->save();   
+                }
+            }
+        }   
+        
+        return redirect('admin/allotedStudents');
+    }
+
+    public function allotedStudents()
+    {
+        $data = AllotedSeats::all();
+        return view('Profile.Admin.AllotedStudents', compact('data'));
+    }
+
+}
